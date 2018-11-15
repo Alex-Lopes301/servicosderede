@@ -1,0 +1,94 @@
+#!/bin/bash
+#ZERANDO E APAGANDO AS FLAGS
+iptables -X
+iptables -Z
+iptables -F
+
+#Configurando as chaisn padrões:
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+#Habilitando a comunicação com a interface loopback:
+iptables -A INPUT -i lo -j ACCEPT
+
+## Bloqueando o acesso da rede WAN à rede interna:
+
+iptables -A INPUT -s 192.168.1.0/27 -p tcp --dport 22 -j DROP
+iptables -A INPUT -s 192.168.1.0/27 -p tcp --dport 3128 -j DROP
+iptables -A FORWARD -s 192.168.1.0/27 -p tcp --dport 3128 -j DROP
+iptables -A INPUT -s 192.168.1.0/27 -p tcp --dport 53 -j DROP
+iptables -A FORWARD -s 192.168.1.0/27 -p tcp --dport 53 -j DROP
+
+## Liberando o acesso remoto via ssh a rede da Diretoria
+
+iptables -A INPUT -s 10.1.1.0/26 -p tcp --sport 22 -j ACCEPT
+
+## Liberando o DNS para a rede ter acesso:
+iptables -A INPUT -p udp --sport 53 -j ACCEPT
+iptables -A FORWARD -p udp --sport 53 -j ACCEPT
+
+# Liberando acesso aos serviços de rede:
+iptables -A INPUT -p tcp -m multiport --dport 25,80,110,443,583 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -p tcp -m multiport --sport 25,80,110,443,583 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -p tcp -m multiport --dport 25,80,110,443,587 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -p tcp -m multiport --sport 25,80,110,443,587 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+
+iptables -A INPUT -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+
+# Definições de segurança:
+# regra de proteção contra ataques do tipo de syn_flood, que é de negação de serviço
+echo "1" > /proc/sys/net/ipv4/tcp_syncookies
+
+#Proteção contra portscans e ataques DoS em geral:
+iptables -A INPUT -m state --state INVALID -j DROP
+iptables -A FORWARD -m state --state INVALID -j DROP
+
+# Desabilita resposta para ping
+echo "1" > /proc/sys/net/ipv4/icmp_echo_ignore_all
+
+# Regra para bloqueio do traceroute
+iptables -A INPUT -p udp --dport 33435:33525 -j DROP
+iptables -A FORWARD -p udp --dport 33435:33525 -j DROP
+iptables -A INPUT -p udp --sport 33435:33525 -j DROP
+iptables -A FORWARD -p udp --sport 33435:33525 -j DROP
+
+# proteção contra ip spoofing
+echo "1" > /proc/sys/net/ipv4/conf/default/rp_filter
+iptables -A INPUT -m state --state INVALID -j DROP
+#for i in /proc/sys/net/ipv4/conf/*/rp_filter; do
+#echo 1 >$i
+#done
+
+# Desabilita redirecionamento de ICMP
+echo 0 > /proc/sys/net/ipv4/conf/all/accept_redirects
+
+# desabilitar redirecionamento de caminho
+echo 0 > /proc/sys/net/ipv4/conf/all/accept_source_route
+
+# Protecao contra worms
+iptables -A FORWARD -p tcp --dport 135 -j DROP
+iptables -A INPUT -p tcp --dport 135 -j DROP
+
+# Proteção contra exploits
+iptables -A INPUT -p tcp --dport 444 -j DROP
+iptables -A FORWARD -p tcp --dport 444 -j DROP
+
+# Impedindo ataque Ping of Death
+iptables -A INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s -j ACCEPT
+iptables -A FORWARD -p icmp --icmp-type echo-request -m limit --limit 1/s -j ACCEPT
+
+# Impedindo ataque de Denial Of Service -DOS-
+iptables -A INPUT -p tcp -m limit --limit 1/s -j ACCEPT
+iptables -A FORWARD -p tcp -m limit --limit 1/s -j ACCEPT
+
+# Proteção contra port scanners
+iptables -A INPUT -d 10.1.1.0/26 -p tcp --tcp-flags SYN,ACK,FIN,RST RST -m limit --limit 1/s -j ACCEPT
+iptables -A FORWARD -d 10.1.1.0/26 -p tcp --tcp-flags SYN,ACK,FIN,RST RST -m limit --limit 1/s -j ACCEPT
+
+###### TABELA NAT #########################
+#Redirecionamento de internet e roteamento de redes:
+#iptables -t nat -A PREROUTING -p tcp --sport 80 -j REDIRECT --to-port 3128
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 3128
+iptables -t nat -A PREROUTING -s 10.1.1.0/26 -p tcp --dport 22 -j REDIRECT -d 192.168.1.30 --to-port 22 
+iptables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE
